@@ -5,7 +5,7 @@ RSpec.describe ResilientCall do
     expect(ResilientCall::VERSION).not_to be nil
   end
 
-  it "does something useful" do
-    expect(false).to eq(true)
+  it "has a frozen VERSION string" do
+    expect(ResilientCall::VERSION).to be_frozen
   end
 end
