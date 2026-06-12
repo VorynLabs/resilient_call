@@ -3,8 +3,9 @@
 require_relative "resilient_call/version"
 require_relative "resilient_call/errors"
 require_relative "resilient_call/retrier"
-# Additional requires (configuration, circuit, circuit_breaker, mixin)
-# will be added in upcoming scopes.
+require_relative "resilient_call/circuit"
+require_relative "resilient_call/circuit_breaker"
+# Additional requires (configuration, mixin) will be added in upcoming scopes.
 
 module ResilientCall
   class << self
