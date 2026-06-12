@@ -6,7 +6,7 @@ require_relative "resilient_call/configuration"
 require_relative "resilient_call/circuit"
 require_relative "resilient_call/circuit_breaker"
 require_relative "resilient_call/retrier"
-# require_relative "resilient_call/mixin" — added in scope 5 once the file exists.
+require_relative "resilient_call/mixin"
 
 module ResilientCall
   class << self
