@@ -93,5 +93,14 @@ module ResilientCall
         @last_failure  = nil
       end
     end
+
+    # Lets the entry point inject configured thresholds onto a circuit that was
+    # created lazily by the registry with default values.
+    def update_config(threshold: nil, reset_timeout: nil)
+      @mutex.synchronize do
+        @threshold     = threshold     unless threshold.nil?
+        @reset_timeout = reset_timeout unless reset_timeout.nil?
+      end
+    end
   end
 end
