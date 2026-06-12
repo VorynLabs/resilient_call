@@ -13,45 +13,16 @@ module ResilientCall
     # Runs `block` with retry and, when `circuit:` is given, circuit-breaker
     # protection. Option precedence: inline > profile > global config > defaults.
     def call(**options, &block)
-      merged = configuration.to_h
+      options = resolve_options(options)
+      circuit = circuit_for(options)
 
-      if (profile_name = options.delete(:profile))
-        profile = configuration.profiles[profile_name] || {}
-        merged  = merged.merge(profile)
+      if circuit && !circuit.allow_request?
+        return options[:fallback].call if options[:fallback]
+
+        raise circuit_open_error(circuit, options)
       end
 
-      merged = merged.merge(options)
-
-      circuit = nil
-      if (circuit_name = merged[:circuit])
-        circuit = CircuitBreaker[circuit_name]
-        circuit.update_config(
-          threshold:     merged[:threshold],
-          reset_timeout: merged[:reset_timeout]
-        )
-
-        unless circuit.allow_request?
-          if (fallback = merged[:fallback])
-            return fallback.call
-          end
-
-          raise CircuitOpenError.new(
-            circuit_name: circuit_name,
-            opens_at:     circuit.opened_at,
-            retry_after:  (circuit.opened_at + merged[:reset_timeout] - Time.now).to_i,
-            last_error:   circuit.last_failure
-          )
-        end
-      end
-
-      Retrier.new(merged).call do
-        result = block.call
-        circuit&.record_success!
-        result
-      rescue StandardError => e
-        circuit&.record_failure!(e)
-        raise
-      end
+      run_with_retry(options, circuit, &block)
     end
 
     def configure
@@ -69,6 +40,52 @@ module ResilientCall
     # Restores global defaults — useful for isolating tests.
     def reset_configuration!
       @configuration = Configuration.new
+    end
+
+    private
+
+    # Merges defaults < profile < inline options into a single options hash.
+    def resolve_options(options)
+      merged = configuration.to_h
+
+      if (profile_name = options.delete(:profile))
+        merged = merged.merge(configuration.profiles[profile_name] || {})
+      end
+
+      merged.merge(options)
+    end
+
+    # Resolves the named circuit (if any) and applies the configured thresholds.
+    def circuit_for(options)
+      return unless (name = options[:circuit])
+
+      CircuitBreaker[name].tap do |circuit|
+        circuit.update_config(
+          threshold:     options[:threshold],
+          reset_timeout: options[:reset_timeout]
+        )
+      end
+    end
+
+    def circuit_open_error(circuit, options)
+      CircuitOpenError.new(
+        circuit_name: options[:circuit],
+        opens_at:     circuit.opened_at,
+        retry_after:  (circuit.opened_at + options[:reset_timeout] - Time.now).to_i,
+        last_error:   circuit.last_failure
+      )
+    end
+
+    # Runs the block through the Retrier, feeding circuit outcomes as it goes.
+    def run_with_retry(options, circuit, &block)
+      Retrier.new(options).call do
+        result = block.call
+        circuit&.record_success!
+        result
+      rescue StandardError => e
+        circuit&.record_failure!(e)
+        raise
+      end
     end
   end
 end
