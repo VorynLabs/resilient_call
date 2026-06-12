@@ -19,7 +19,7 @@ Gem::Specification.new do |spec|
   spec.metadata["source_code_uri"]   = "https://github.com/VorynLabs/resilient_call"
   spec.metadata["changelog_uri"]     = "https://github.com/VorynLabs/resilient_call/blob/main/CHANGELOG.md"
 
-  spec.files         = Dir["lib/**/*", "README.md", "LICENSE.txt", "CHANGELOG.md"]
+  spec.files         = Dir["lib/**/*", "README.md", "LICENSE", "CHANGELOG.md"]
   spec.require_paths = ["lib"]
 
   spec.add_development_dependency "rspec", "~> 3.12"
