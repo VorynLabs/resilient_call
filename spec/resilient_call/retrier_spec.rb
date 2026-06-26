@@ -1,150 +1,220 @@
 # frozen_string_literal: true
 
 RSpec.describe ResilientCall::Retrier do
-  # Never sleep for real time in specs.
-  def build(options = {})
-    described_class.new(options).tap do |retrier|
-      allow(retrier).to receive(:sleep)
+  subject(:retrier) { described_class.new(options) }
+
+  let(:options) { {} }
+  let(:work)    { double('work') }
+  let(:error)   { RuntimeError.new('boom') }
+
+  # Never sleep for real time; stubbing also lets us inspect the wait values.
+  before { allow(retrier).to receive(:sleep) }
+
+  describe '#call' do
+    context 'when the block succeeds on the first attempt' do
+      let(:options)    { { on_success: on_success } }
+      let(:on_success) { double('on_success', call: nil) }
+
+      before { allow(work).to receive(:call).and_return(:ok) }
+
+      it 'returns the block result' do
+        expect(retrier.call { work.call }).to eq(:ok)
+      end
+
+      it 'invokes the block once' do
+        retrier.call { work.call }
+        expect(work).to have_received(:call).once
+      end
+
+      it 'never sleeps' do
+        retrier.call { work.call }
+        expect(retrier).not_to have_received(:sleep)
+      end
+
+      it 'fires on_success with the result and the attempt number' do
+        retrier.call { work.call }
+        expect(on_success).to have_received(:call).with(:ok, 1)
+      end
+    end
+
+    context 'when the block succeeds on an intermediate attempt' do
+      let(:options) { { retries: 3 } }
+
+      before do
+        allow(work).to receive(:call).and_invoke(
+          -> { raise error },
+          -> { raise error },
+          -> { :ok }
+        )
+      end
+
+      it 'returns the eventual result' do
+        expect(retrier.call { work.call }).to eq(:ok)
+      end
+
+      it 'invokes the block until it succeeds' do
+        retrier.call { work.call }
+        expect(work).to have_received(:call).exactly(3).times
+      end
+
+      it 'sleeps before each retry' do
+        retrier.call { work.call }
+        expect(retrier).to have_received(:sleep).twice
+      end
+    end
+
+    context 'when every attempt fails' do
+      let(:options) { { retries: 2 } }
+
+      before { allow(work).to receive(:call).and_raise(error) }
+
+      it 'raises RetriesExhaustedError' do
+        expect { retrier.call { work.call } }
+          .to raise_error(ResilientCall::RetriesExhaustedError)
+      end
+
+      it 'reports the total number of attempts' do
+        expect { retrier.call { work.call } }
+          .to raise_error(ResilientCall::RetriesExhaustedError) do |e|
+            expect(e.attempts).to eq(3) # 1 initial + 2 retries
+          end
+      end
+
+      it 'exposes the last captured exception via #cause' do
+        expect { retrier.call { work.call } }
+          .to raise_error(ResilientCall::RetriesExhaustedError) do |e|
+            expect(e.cause).to be(error)
+          end
+      end
+    end
+
+    context 'when the error is not listed in :on' do
+      let(:options) { { retries: 5, on: [KeyError] } }
+
+      before { allow(work).to receive(:call).and_raise(ArgumentError, 'not retried') }
+
+      it 'propagates the original error' do
+        expect { retrier.call { work.call } }.to raise_error(ArgumentError)
+      end
+
+      it 'does not retry' do
+        expect { retrier.call { work.call } }.to raise_error(ArgumentError)
+        expect(work).to have_received(:call).once
+      end
     end
   end
 
-  # A block that fails `n` times with `error`, then returns `result`.
-  def flaky(n, error: RuntimeError.new("boom"), result: :ok)
-    calls = 0
-    lambda do
-      calls += 1
-      raise error if calls <= n
-
-      result
-    end
-  end
-
-  describe "#call" do
-    it "returns the block result when it succeeds on the first attempt" do
-      retrier = build
-      expect(retrier.call { :ok }).to eq(:ok)
-    end
-
-    it "retries and returns the result when it succeeds on an intermediate attempt" do
-      retrier = build(retries: 3)
-      expect(retrier.call(&flaky(2))).to eq(:ok)
-    end
-
-    it "raises RetriesExhaustedError once every attempt is consumed" do
-      retrier = build(retries: 2)
-      expect { retrier.call { raise "boom" } }
+  describe 'backoff' do
+    before do
+      allow(work).to receive(:call).and_raise(error)
+      expect { retrier.call { work.call } }
         .to raise_error(ResilientCall::RetriesExhaustedError)
     end
 
-    it "reports the correct number of attempts on RetriesExhaustedError" do
-      retrier = build(retries: 2)
-      retrier.call { raise "boom" }
-    rescue ResilientCall::RetriesExhaustedError => e
-      expect(e.attempts).to eq(3) # 1 initial + 2 retries
-    end
+    context 'with :exponential strategy' do
+      let(:options) { { retries: 3, wait: :exponential, base_wait: 0.5, jitter: false } }
 
-    it "exposes the last captured exception via #cause" do
-      boom = ArgumentError.new("last one")
-      retrier = build(retries: 1)
-      retrier.call { raise boom }
-    rescue ResilientCall::RetriesExhaustedError => e
-      expect(e.cause).to be(boom)
-    end
-
-    it "only retries exceptions listed in :on, propagating others immediately" do
-      retrier = build(retries: 5, on: [KeyError])
-      calls = 0
-      block = lambda do
-        calls += 1
-        raise ArgumentError, "not retried"
+      it 'doubles the wait each attempt' do
+        expect(retrier).to have_received(:sleep).with(1.0).ordered
+        expect(retrier).to have_received(:sleep).with(2.0).ordered
+        expect(retrier).to have_received(:sleep).with(4.0).ordered
       end
+    end
 
-      expect { retrier.call(&block) }.to raise_error(ArgumentError)
-      expect(calls).to eq(1)
+    context 'with :linear strategy' do
+      let(:options) { { retries: 3, wait: :linear, base_wait: 0.5, jitter: false } }
+
+      it 'grows the wait by base_wait each attempt' do
+        expect(retrier).to have_received(:sleep).with(0.5).ordered
+        expect(retrier).to have_received(:sleep).with(1.0).ordered
+        expect(retrier).to have_received(:sleep).with(1.5).ordered
+      end
+    end
+
+    context 'with :fixed strategy' do
+      let(:options) { { retries: 3, wait: :fixed, base_wait: 0.5, jitter: false } }
+
+      it 'keeps the wait constant' do
+        expect(retrier).to have_received(:sleep).with(0.5).exactly(3).times
+      end
+    end
+
+    context 'with a custom lambda strategy' do
+      let(:options) { { retries: 3, wait: ->(n) { n * 1.5 }, jitter: false } }
+
+      it 'calls the lambda with the 1-based attempt number' do
+        expect(retrier).to have_received(:sleep).with(1.5).ordered
+        expect(retrier).to have_received(:sleep).with(3.0).ordered
+        expect(retrier).to have_received(:sleep).with(4.5).ordered
+      end
+    end
+
+    context 'when the wait exceeds max_wait' do
+      let(:options) { { retries: 4, wait: :exponential, base_wait: 1.0, max_wait: 3.0, jitter: false } }
+
+      it 'caps every wait at max_wait' do
+        expect(retrier).to have_received(:sleep).with(2.0).ordered
+        expect(retrier).to have_received(:sleep).with(3.0).exactly(3).times
+      end
+    end
+
+    context 'when jitter is enabled' do
+      let(:options) { { retries: 1, wait: :fixed, base_wait: 0.5, jitter: true } }
+
+      it 'adds positive variation to the wait' do
+        expect(retrier).to have_received(:sleep).with(a_value >= 0.5)
+      end
     end
   end
 
-  describe "backoff" do
-    def waits_for(options)
-      retrier = build(options.merge(jitter: false))
-      slept = []
-      allow(retrier).to receive(:sleep) { |s| slept << s }
-      begin
-        retrier.call { raise "boom" }
-      rescue ResilientCall::RetriesExhaustedError
-        # ignore — we only care about the sleep arguments
+  describe 'callbacks' do
+    context 'on_retry' do
+      let(:options)  { { retries: 2, on_retry: on_retry } }
+      let(:on_retry) { double('on_retry', call: nil) }
+
+      before do
+        allow(work).to receive(:call).and_raise(error)
+        expect { retrier.call { work.call } }
+          .to raise_error(ResilientCall::RetriesExhaustedError)
       end
-      slept
-    end
 
-    it "computes :exponential backoff per attempt" do
-      expect(waits_for(retries: 3, wait: :exponential, base_wait: 0.5))
-        .to eq([1.0, 2.0, 4.0])
-    end
-
-    it "computes :linear backoff per attempt" do
-      expect(waits_for(retries: 3, wait: :linear, base_wait: 0.5))
-        .to eq([0.5, 1.0, 1.5])
-    end
-
-    it "keeps :fixed backoff constant between attempts" do
-      expect(waits_for(retries: 3, wait: :fixed, base_wait: 0.5))
-        .to eq([0.5, 0.5, 0.5])
-    end
-
-    it "calls a custom lambda with the 1-based attempt number" do
-      expect(waits_for(retries: 3, wait: ->(n) { n * 1.5 }, base_wait: 0.5))
-        .to eq([1.5, 3.0, 4.5])
-    end
-
-    it "caps the backoff at max_wait" do
-      slept = waits_for(retries: 4, wait: :exponential, base_wait: 1.0, max_wait: 3.0)
-      expect(slept).to all(be <= 3.0)
-      expect(slept).to eq([2.0, 3.0, 3.0, 3.0])
-    end
-
-    it "adds positive variation when jitter is enabled" do
-      retrier = build(retries: 1, wait: :fixed, base_wait: 0.5, jitter: true)
-      slept = []
-      allow(retrier).to receive(:sleep) { |s| slept << s }
-      begin
-        retrier.call { raise "boom" }
-      rescue ResilientCall::RetriesExhaustedError
-        nil
+      it 'fires with the attempt number and exception on each retry' do
+        expect(on_retry).to have_received(:call).with(1, error).ordered
+        expect(on_retry).to have_received(:call).with(2, error).ordered
       end
-      expect(slept.first).to be >= 0.5
     end
-  end
 
-  describe "callbacks" do
-    it "calls on_retry with attempt and exception on each retry" do
-      seen = []
-      retrier = build(retries: 2, on_retry: ->(attempt, err) { seen << [attempt, err.message] })
-      begin
-        retrier.call { raise "boom" }
-      rescue ResilientCall::RetriesExhaustedError
-        nil
+    context 'on_failure' do
+      let(:options)    { { retries: 1, on_failure: on_failure } }
+      let(:on_failure) { double('on_failure', call: nil) }
+
+      before do
+        allow(work).to receive(:call).and_raise(error)
+        expect { retrier.call { work.call } }
+          .to raise_error(ResilientCall::RetriesExhaustedError)
       end
-      expect(seen).to eq([[1, "boom"], [2, "boom"]])
-    end
 
-    it "calls on_failure with the exception once attempts are exhausted" do
-      captured = nil
-      retrier = build(retries: 1, on_failure: ->(err) { captured = err })
-      begin
-        retrier.call { raise "boom" }
-      rescue ResilientCall::RetriesExhaustedError
-        nil
+      it 'fires once with the final exception' do
+        expect(on_failure).to have_received(:call).with(error).once
       end
-      expect(captured).to be_a(RuntimeError)
-      expect(captured.message).to eq("boom")
     end
 
-    it "calls on_success with the result and the attempt count" do
-      captured = nil
-      retrier = build(retries: 3, on_success: ->(result, attempts) { captured = [result, attempts] })
-      retrier.call(&flaky(2, result: :done))
-      expect(captured).to eq([:done, 3])
+    context 'on_success' do
+      let(:options)    { { retries: 3, on_success: on_success } }
+      let(:on_success) { double('on_success', call: nil) }
+
+      before do
+        allow(work).to receive(:call).and_invoke(
+          -> { raise error },
+          -> { raise error },
+          -> { :done }
+        )
+      end
+
+      it 'fires with the result and the total attempt count' do
+        retrier.call { work.call }
+        expect(on_success).to have_received(:call).with(:done, 3)
+      end
     end
   end
 end
