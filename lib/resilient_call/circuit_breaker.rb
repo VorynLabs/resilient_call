@@ -7,10 +7,12 @@ module ResilientCall
     @mutex    = Mutex.new
 
     # Returns the circuit for `name`, creating it on first access. Created with
-    # the scope-3 defaults (threshold: 5, reset_timeout: 60); scope 4 will inject
-    # configured values through the entry point.
+    # default thresholds and the globally configured storage; the entry point
+    # injects the configured thresholds through Circuit#update_config.
     def self.[](name)
-      @mutex.synchronize { @registry[name] ||= Circuit.new(name) }
+      @mutex.synchronize do
+        @registry[name] ||= Circuit.new(name, storage: ResilientCall.configuration.circuit_storage)
+      end
     end
 
     def self.reset_all!
