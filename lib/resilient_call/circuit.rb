@@ -1,8 +1,15 @@
 # frozen_string_literal: true
 
+require_relative "storage/memory"
+
 module ResilientCall
   # Holds the state of a single named circuit and manages its transitions.
-  # Thread-safe: every public method runs under an internal Mutex.
+  # The mutable state lives in the injected `storage` (memory by default, Redis
+  # for multi-process setups); this class owns only the transition rules.
+  #
+  # Thread-safe within a process: every read-modify-write runs under an internal
+  # Mutex, so concurrent calls on the same instance stay consistent. Across
+  # processes, consistency is bounded by the storage backend (see Storage::Redis).
   #
   #   closed --(threshold failures)--> open --(reset_timeout elapsed)--> half_open
   #     ^                                                                     |
@@ -11,45 +18,47 @@ module ResilientCall
   class Circuit
     attr_reader :name, :threshold, :reset_timeout
 
-    def initialize(name, threshold: 5, reset_timeout: 60)
+    def initialize(name, threshold: 5, reset_timeout: 60, storage: nil)
       @name          = name
       @threshold     = threshold
       @reset_timeout = reset_timeout
-      @state         = :closed
-      @failure_count = 0
-      @opened_at     = nil
+      @storage       = storage || Storage::Memory.new
       @last_failure  = nil
       @mutex         = Mutex.new
     end
 
     def state
-      @mutex.synchronize { @state }
+      @mutex.synchronize { read_state[:status] }
     end
 
     def failure_count
-      @mutex.synchronize { @failure_count }
+      @mutex.synchronize { read_state[:failure_count] }
     end
 
+    # The full Exception object captured most recently *in this process*. State
+    # shared through Redis only carries its message/class, so a fresh process
+    # reading an open circuit sees nil here — use CircuitOpenError for details.
     def last_failure
       @mutex.synchronize { @last_failure }
     end
 
     def opened_at
-      @mutex.synchronize { @opened_at }
+      @mutex.synchronize { read_state[:opened_at] }
     end
 
     # Whether a request may pass right now. An :open circuit whose reset_timeout
     # has elapsed transitions to :half_open and lets a single probe through.
     def allow_request?
       @mutex.synchronize do
-        case @state
-        when :closed
-          true
-        when :half_open
+        state = read_state
+
+        case state[:status]
+        when :closed, :half_open
           true
         when :open
-          if Time.now - @opened_at >= @reset_timeout
-            @state = :half_open
+          if Time.now - state[:opened_at] >= @reset_timeout
+            state[:status] = :half_open
+            write_state(state)
             true
           else
             false
@@ -60,37 +69,45 @@ module ResilientCall
 
     def record_success!
       @mutex.synchronize do
-        case @state
+        state = read_state
+
+        case state[:status]
         when :half_open
-          @state         = :closed
-          @failure_count = 0
+          state[:status]        = :closed
+          state[:failure_count] = 0
         when :closed
-          @failure_count = 0
+          state[:failure_count] = 0
         end
+
+        write_state(state)
       end
     end
 
     def record_failure!(error)
       @mutex.synchronize do
-        @failure_count += 1
-        @last_failure   = error
+        @last_failure = error
 
-        if @state == :half_open
-          @state     = :open
-          @opened_at = Time.now
-        elsif @state == :closed && @failure_count >= @threshold
-          @state     = :open
-          @opened_at = Time.now
+        state = read_state
+        state[:failure_count]       += 1
+        state[:last_failure_message] = error.message
+        state[:last_failure_class]   = error.class.name
+
+        if state[:status] == :half_open
+          state[:status]    = :open
+          state[:opened_at] = Time.now
+        elsif state[:status] == :closed && state[:failure_count] >= @threshold
+          state[:status]    = :open
+          state[:opened_at] = Time.now
         end
+
+        write_state(state)
       end
     end
 
     def reset!
       @mutex.synchronize do
-        @state         = :closed
-        @failure_count = 0
-        @opened_at     = nil
-        @last_failure  = nil
+        @last_failure = nil
+        @storage.reset(@name)
       end
     end
 
@@ -101,6 +118,28 @@ module ResilientCall
         @threshold     = threshold     unless threshold.nil?
         @reset_timeout = reset_timeout unless reset_timeout.nil?
       end
+    end
+
+    private
+
+    # Current persisted state, or a fresh :closed state when the circuit has no
+    # record yet. Callers mutate the returned Hash and persist via write_state.
+    def read_state
+      @storage.read(@name) || default_state
+    end
+
+    def write_state(state)
+      @storage.write(@name, state)
+    end
+
+    def default_state
+      {
+        status:               :closed,
+        failure_count:        0,
+        opened_at:            nil,
+        last_failure_message: nil,
+        last_failure_class:   nil
+      }
     end
   end
 end
