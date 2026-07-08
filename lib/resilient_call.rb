@@ -16,11 +16,7 @@ module ResilientCall
       options = resolve_options(options)
       circuit = circuit_for(options)
 
-      if circuit && !circuit.allow_request?
-        return options[:fallback].call if options[:fallback]
-
-        raise circuit_open_error(circuit, options)
-      end
+      return reject_open_circuit(circuit, options) if circuit_blocking?(circuit)
 
       run_with_retry(options, circuit, &block)
     end
@@ -65,6 +61,19 @@ module ResilientCall
           reset_timeout: options[:reset_timeout]
         )
       end
+    end
+
+    # True when a circuit exists and is currently rejecting requests.
+    def circuit_blocking?(circuit)
+      circuit && !circuit.allow_request?
+    end
+
+    # Handles a request blocked by an open circuit: runs the fallback if one
+    # was given, otherwise raises CircuitOpenError.
+    def reject_open_circuit(circuit, options)
+      return options[:fallback].call if options[:fallback]
+
+      raise circuit_open_error(circuit, options)
     end
 
     def circuit_open_error(circuit, options)

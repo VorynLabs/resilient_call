@@ -5,10 +5,13 @@ module ResilientCall
   class Configuration
     # retry
     attr_accessor :retries, :wait, :base_wait, :max_wait, :jitter, :on
+
     # circuit breaker
     attr_accessor :threshold, :reset_timeout
+
     # callbacks
     attr_accessor :on_retry, :on_failure, :on_success
+
     # named profiles registry
     attr_accessor :profiles
 
@@ -19,14 +22,11 @@ module ResilientCall
       @max_wait      = 30.0
       @jitter        = true
       @on            = [StandardError]
-
       @threshold     = 5
       @reset_timeout = 60
-
       @on_retry      = nil
       @on_failure    = nil
       @on_success    = nil
-
       @profiles      = {}
     end
 
