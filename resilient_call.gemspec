@@ -22,6 +22,8 @@ Gem::Specification.new do |spec|
   spec.files         = Dir["lib/**/*", "README.md", "LICENSE", "CHANGELOG.md"]
   spec.require_paths = ["lib"]
 
-  spec.add_development_dependency "rspec", "~> 3.12"
-  spec.add_development_dependency "rake",  "~> 13.0"
+  spec.add_development_dependency "rspec",      "~> 3.12"
+  spec.add_development_dependency "rake",       "~> 13.0"
+  spec.add_development_dependency "redis",      "~> 5.0"
+  spec.add_development_dependency "mock_redis", "~> 0.30"
 end
