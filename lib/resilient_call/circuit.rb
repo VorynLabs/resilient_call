@@ -9,7 +9,7 @@ module ResilientCall
   #     +------------------------- record_success! -------------------------+
   #   half_open --(record_failure!)--> open  (restarts the timer)
   class Circuit
-    attr_reader :name, :threshold, :reset_timeout
+    attr_reader :name, :threshold, :reset_timeout, :state, :failure_count, :last_failure, :opened_at
 
     def initialize(name, threshold: 5, reset_timeout: 60)
       @name          = name
@@ -22,38 +22,14 @@ module ResilientCall
       @mutex         = Mutex.new
     end
 
-    def state
-      @mutex.synchronize { @state }
-    end
-
-    def failure_count
-      @mutex.synchronize { @failure_count }
-    end
-
-    def last_failure
-      @mutex.synchronize { @last_failure }
-    end
-
-    def opened_at
-      @mutex.synchronize { @opened_at }
-    end
-
     # Whether a request may pass right now. An :open circuit whose reset_timeout
     # has elapsed transitions to :half_open and lets a single probe through.
     def allow_request?
       @mutex.synchronize do
         case @state
-        when :closed
-          true
-        when :half_open
-          true
-        when :open
-          if Time.now - @opened_at >= @reset_timeout
-            @state = :half_open
-            true
-          else
-            false
-          end
+        when :closed then true
+        when :half_open then true
+        when :open then allow_after_open?
         end
       end
     end
@@ -75,13 +51,7 @@ module ResilientCall
         @failure_count += 1
         @last_failure   = error
 
-        if @state == :half_open
-          @state     = :open
-          @opened_at = Time.now
-        elsif @state == :closed && @failure_count >= @threshold
-          @state     = :open
-          @opened_at = Time.now
-        end
+        open_circuit! if should_open?
       end
     end
 
@@ -101,6 +71,24 @@ module ResilientCall
         @threshold     = threshold     unless threshold.nil?
         @reset_timeout = reset_timeout unless reset_timeout.nil?
       end
+    end
+
+    private
+
+    def should_open?
+      @state == :half_open || (@state == :closed && @failure_count >= @threshold)
+    end
+
+    def open_circuit!
+      @state     = :open
+      @opened_at = Time.now
+    end
+
+    def allow_after_open?
+      return false unless Time.now - @opened_at >= reset_timeout
+
+      @state = :half_open
+      true
     end
   end
 end

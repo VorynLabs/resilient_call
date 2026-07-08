@@ -242,12 +242,16 @@ end
 
 ## Roadmap
 
-| Version | Feature                                                          |
+Current release: **v0.1.0** — see the [CHANGELOG](CHANGELOG.md) for what shipped.
+
+The versions below are planned, not yet released:
+
+| Version | Planned feature                                                 |
 | ------- | --------------------------------------------------------------- |
 | `v0.2`  | Pluggable storage for circuit state (Redis for multi-process)   |
-| `v0.3`  | `ActiveSupport::Notifications` instrumentation and metrics      |
-| `v0.4`  | Mountable Rack dashboard for live circuit state                 |
-| `v0.5`  | Native timeout integrated into the retry loop                   |
+| `v0.3`  | Native timeout integrated into the retry loop                   |
+| `v0.4`  | `ActiveSupport::Notifications` instrumentation and metrics      |
+| `v0.5`  | Mountable Rack dashboard for live circuit state                 |
 | `v1.0`  | Stable API, full documentation, published benchmarks            |
 
 ## Contributing
