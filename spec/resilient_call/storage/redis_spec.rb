@@ -27,23 +27,24 @@ RSpec.describe ResilientCall::Storage::Redis do
     expect(storage.read(:stripe)).to eq(state)
   end
 
-  it 'deletes the circuit key on reset' do
-    storage.write(:stripe, state)
+  describe 'removal' do
+    before { storage.write(:stripe, state) }
 
-    storage.reset(:stripe)
+    it 'deletes the circuit key on reset' do
+      storage.reset(:stripe)
 
-    expect(storage.read(:stripe)).to be_nil
-    expect(redis.get('resilient_call:circuit:stripe')).to be_nil
-  end
+      expect(storage.read(:stripe)).to be_nil
+      expect(redis.get('resilient_call:circuit:stripe')).to be_nil
+    end
 
-  it 'removes only the gem-prefixed keys on reset_all' do
-    storage.write(:stripe, state)
-    redis.set('unrelated:key', 'keep me')
+    it 'removes only the gem-prefixed keys on reset_all' do
+      redis.set('unrelated:key', 'keep me')
 
-    storage.reset_all
+      storage.reset_all
 
-    expect(storage.read(:stripe)).to be_nil
-    expect(redis.get('unrelated:key')).to eq('keep me')
+      expect(storage.read(:stripe)).to be_nil
+      expect(redis.get('unrelated:key')).to eq('keep me')
+    end
   end
 
   it 'shares state between two clients backed by the same Redis (two processes)' do

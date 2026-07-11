@@ -15,24 +15,25 @@ RSpec.describe ResilientCall::Storage::Memory do
     expect(storage.read(:stripe)).to eq(state)
   end
 
-  it 'removes only the circuit passed to reset' do
-    storage.write(:stripe, state)
-    storage.write(:paypal, state)
+  describe 'removal' do
+    before do
+      storage.write(:stripe, state)
+      storage.write(:paypal, state)
+    end
 
-    storage.reset(:stripe)
+    it 'removes only the circuit passed to reset' do
+      storage.reset(:stripe)
 
-    expect(storage.read(:stripe)).to be_nil
-    expect(storage.read(:paypal)).to eq(state)
-  end
+      expect(storage.read(:stripe)).to be_nil
+      expect(storage.read(:paypal)).to eq(state)
+    end
 
-  it 'removes every circuit on reset_all' do
-    storage.write(:stripe, state)
-    storage.write(:paypal, state)
+    it 'removes every circuit on reset_all' do
+      storage.reset_all
 
-    storage.reset_all
-
-    expect(storage.read(:stripe)).to be_nil
-    expect(storage.read(:paypal)).to be_nil
+      expect(storage.read(:stripe)).to be_nil
+      expect(storage.read(:paypal)).to be_nil
+    end
   end
 
   describe 'thread safety' do
