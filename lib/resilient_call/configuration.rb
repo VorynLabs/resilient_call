@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require_relative "storage/memory"
+
 module ResilientCall
   # Holds the global defaults and the registry of named profiles.
   class Configuration
@@ -11,7 +13,9 @@ module ResilientCall
 
     # callbacks
     attr_accessor :on_retry, :on_failure, :on_success
-
+    # circuit state backend (Storage::Memory by default, Storage::Redis for
+    # multi-process setups); shared by every named circuit
+    attr_accessor :circuit_storage
     # named profiles registry
     attr_accessor :profiles
 
@@ -27,6 +31,9 @@ module ResilientCall
       @on_retry      = nil
       @on_failure    = nil
       @on_success    = nil
+
+      @circuit_storage = Storage::Memory.new
+
       @profiles      = {}
     end
 

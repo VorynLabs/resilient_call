@@ -2,6 +2,8 @@
 
 require_relative "resilient_call/version"
 require_relative "resilient_call/errors"
+require_relative "resilient_call/storage/base"
+require_relative "resilient_call/storage/memory"
 require_relative "resilient_call/configuration"
 require_relative "resilient_call/circuit"
 require_relative "resilient_call/circuit_breaker"
@@ -9,6 +11,12 @@ require_relative "resilient_call/retrier"
 require_relative "resilient_call/mixin"
 
 module ResilientCall
+  # Redis storage is optional — loaded only when explicitly referenced, so the
+  # gem stays usable in plain Ruby without pulling in a Redis client.
+  module Storage
+    autoload :Redis, "resilient_call/storage/redis"
+  end
+
   class << self
     # Runs `block` with retry and, when `circuit:` is given, circuit-breaker
     # protection. Option precedence: inline > profile > global config > defaults.

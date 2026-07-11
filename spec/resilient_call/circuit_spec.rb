@@ -1,7 +1,9 @@
 # frozen_string_literal: true
 
 RSpec.describe ResilientCall::Circuit do
-  subject(:circuit) { described_class.new(:stripe, threshold: 3, reset_timeout: 30) }
+  subject(:circuit) { described_class.new(:stripe, threshold: 3, reset_timeout: 30, storage: storage) }
+
+  let(:storage) { ResilientCall::Storage::Memory.new }
 
   let(:error) { RuntimeError.new('boom') }
   let(:now) { Time.now }
@@ -78,7 +80,7 @@ RSpec.describe ResilientCall::Circuit do
   end
 
   describe 'thread safety' do
-    subject(:circuit) { described_class.new(:concurrent, threshold: 1_000, reset_timeout: 30) }
+    subject(:circuit) { described_class.new(:concurrent, threshold: 1_000, reset_timeout: 30, storage: storage) }
 
     it 'keeps failure_count exact under concurrent record_failure! calls' do
       threads = Array.new(50) { Thread.new { circuit.record_failure!(error) } }
