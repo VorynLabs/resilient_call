@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-07-10
+
+### Added
+
+- Pluggable circuit storage via `ResilientCall::Storage::Base` — lets the circuit
+  breaker share state across processes instead of a per-process in-memory Hash.
+- `ResilientCall::Storage::Memory`, the default backend, extracted from the
+  `Circuit`/`CircuitBreaker` internals with no behavior change.
+- `circuit_storage` global config option to swap the storage backend.
+
+### Changed
+
+- `Circuit` now delegates state persistence to the configured storage instead of
+  holding `@state`/`@failure_count` as instance variables.
+
 ## [0.1.0] - 2026-06-12
 
 ### Added
@@ -32,5 +47,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `ResilientCall::RetriesExhaustedError` (the latter preserves the native
   `#cause` chain).
 
-[Unreleased]: https://github.com/VorynLabs/resilient_call/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/VorynLabs/resilient_call/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/VorynLabs/resilient_call/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/VorynLabs/resilient_call/releases/tag/v0.1.0
