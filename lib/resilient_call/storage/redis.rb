@@ -21,6 +21,7 @@ module ResilientCall
 
       def read(circuit_name)
         raw = @redis.get(key_for(circuit_name))
+
         raw ? deserialize(raw) : nil
       end
 
