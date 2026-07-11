@@ -30,44 +30,62 @@ module ResilientCall
       @on_success = opts[:on_success]
     end
 
-    # Runs the block. Returns its result, or raises RetriesExhaustedError once
-    # every attempt has been consumed.
     def call
       attempt = 0
 
       begin
         attempt += 1
         result = yield
-        @on_success&.call(result, attempt)
+        on_success&.call(result, attempt)
         result
-      rescue *@on => err
-        if attempt <= @retries
-          @on_retry&.call(attempt, err)
-          sleep(wait_time(attempt))
-          retry
-        end
+      rescue *on => err
+        raise_exhausted(err, attempt) unless retryable?(attempt)
 
-        @on_failure&.call(err)
-        # Raised inside the rescue so Ruby populates #cause with `err`.
-        raise RetriesExhaustedError.new(attempts: attempt)
+        on_retry&.call(attempt, err)
+        sleep(wait_time(attempt))
+        retry
       end
     end
 
     private
 
-    # 1-based attempt number. Applies jitter before capping at max_wait.
-    def wait_time(attempt)
-      raw = case @wait
-            when :exponential then @base_wait * (2**attempt)
-            when :linear      then @base_wait * attempt
-            when :fixed       then @base_wait
-            when Proc         then @wait.call(attempt)
-            else
-              raise ArgumentError, "unknown wait strategy: #{@wait.inspect}"
-            end
+    attr_reader :retries, :wait, :base_wait, :max_wait, :jitter,
+                :on, :on_retry, :on_failure, :on_success
 
-      raw += rand(0..@base_wait * 0.3) if @jitter
-      [raw, @max_wait].min
+    # True while retries remain. `attempt` is the 1-based number that just ran.
+    def retryable?(attempt)
+      attempt <= retries
+    end
+
+    def raise_exhausted(err, attempt)
+      on_failure&.call(err)
+      # Raised inside the rescue so Ruby populates #cause with `err`.
+      raise RetriesExhaustedError.new(attempts: attempt)
+    end
+
+    def wait_time(attempt)
+      [with_jitter(base_delay(attempt)), max_wait].min
+    end
+
+    def base_delay(attempt)
+      case wait
+      when :exponential
+        base_wait * (2**attempt)
+      when :linear
+        base_wait * attempt
+      when :fixed
+        base_wait
+      when Proc
+        wait.call(attempt)
+      else
+        raise ArgumentError, "unknown wait strategy: #{wait.inspect}"
+      end
+    end
+
+    def with_jitter(delay)
+      return delay unless jitter
+
+      delay + rand(0..base_wait * 0.3)
     end
   end
 end
